@@ -2,8 +2,6 @@
 
 ## 1. Introducción
 
-Los avances tecnológicos dentro del sector de la salud han permitido incrementar la disponibilidad de información clinica de los pacientes. Sin embargo, cuando hablamos de enfermedades huérfanas, esta información puede llegar a ser escasa dificultando el estudio de estas. 
-
 Ahora bien, en la primera unidad se propuso un pipeline orientado a la predicción de enfermedades a partir de los síntomas de los pacientes. Para esta estapa, se busca reestructurar dicho pipeline, incorporando los conceptos de MLOps, con el propósito de garantizar la reproducibilidad, trazabilidad, automatización, despliegue y mantenimiento del modelo a lo largo de su ciclo de vida. La propuesta conserva las etapa del pipeline original pero se amplia su alcance incorporando procesos y tecnología que facilitaran su implementación en un entorno real.
 
 ## 2. Objetivos
@@ -127,6 +125,7 @@ flowchart TD
     class N,P,Q,R monitoreo
     class H,O decision
 ```
+*Figura 1. Pipeline.
 
 ### 5.2. Funcionamiento general
 
@@ -155,3 +154,215 @@ En caso de que el volumen de información supere la capacidad de procesamiento d
 Asimismo, si las necesidades de infraestructura requieren un mayor control sobre la administración y escalabilidad de los contenedores, se podrá considerar Kubernetes como alternativa al servicio administrado de Google Cloud Run.
 
 Estas tecnologías no serán requisitos obligatorios de la implementación inicial, sino alternativas que podrán incorporarse según las necesidades reales del proyecto.
+
+## 6. Etapas del pipeline
+
+### 6.1. Recolección y almacenamiento de datos
+
+#### Suposiciones
+
+| Suposición | Implicación |
+|---|---|
+| Se tiene acceso a registros clínicos. | Hay acuerdos de acceso y uso de la información. |
+| Los registros contienen diagnósticos confirmados. | Permite aplicar aprendizaje supervisado. |
+| Las enfermedades huérfanas cuentan con menos registros. | Considerar estrategias de aprendizaje para datos escasos. |
+| Las fuentes con diferentes estructuras. | Estandarizar la información. |
+| Los datos clínicos son sensibles. | Se deben aplicar mecanismos de privacidad, cifrado y control de acceso. |
+
+#### Descripción del proceso
+
+1. Extraer información de historias clínicas y registros de enfermedades huérfanas.
+
+2. Integrar los registros de las diferentes fuentes mediante y seudonimizarlos. 
+
+3. Almacenar los registros estructurados en PostgreSQL y los archivos de datos en Google Cloud Storage, diferenciando los datos originales (Raw Data) de los datos procesados (Processed Data).
+
+4. Automatizar las cargas periódicas mediante Apache Airflow, incorporando alertas, registros de ejecución y reintentos ante posibles fallos.
+
+#### Diagrama del proceso
+
+```mermaid
+flowchart TD
+    A["Hospitales"]
+    B["Historias clínicas"]
+    C["Registros de enfermedades huérfanas"]
+
+    D["Extracción e integración<br/>Python + Apache Airflow"]
+    E["Validación de registros"]
+    F["Seudonimización de datos"]
+
+    G[("PostgreSQL<br/>Registros estructurados")]
+    H[("Google Cloud Storage<br/>Archivos y datasets")]
+
+    I["Datos originales disponibles<br/>Raw Data"]
+    J["Siguiente etapa:<br/>Preparación de datos"]
+
+    A --> D
+    B --> D
+    C --> D
+    D --> E
+    E --> F
+    F --> G
+    F --> H
+    G --> I
+    H --> I
+    I --> J
+
+    classDef fuentes fill:#DBEAFE,stroke:#2563EB,color:#172554
+    classDef proceso fill:#EDE9FE,stroke:#7C3AED,color:#2E1065
+    classDef seguridad fill:#F1F5F9,stroke:#64748B,color:#1E293B
+    classDef almacenamiento fill:#CCFBF1,stroke:#0D9488,color:#134E4A
+
+    class A,B,C,I,J fuentes
+    class D,E proceso
+    class F seguridad
+    class G,H almacenamiento
+```
+
+*Figura 2. Recolección y almacenamiento de datos.
+
+#### Tecnologías seleccionadas y justificación
+
+| Tecnología | Función | Justificación |
+|---|---|---|
+| Python | Extracción e integración. | Compatibilidad con el formato de dato. |
+| PostgreSQL | Almacenamiento estructurado. | Facilita las consultas SQL. |
+| Google Cloud Storage | Almacenamiento de archivos. | Permite almacenar grandes volúmenes de datos. |
+| Apache Airflow | Orquestación de la ingesta. | Automatiza las cargas periódicas y facilita el control de fallos. |
+
+
+
+
+
+
+### 6.2. Preparación y procesamiento de datos
+
+#### Objetivo
+
+Transformar los datos clínicos recolectados en un conjunto
+de datos de calidad, consistente y adecuado para el
+entrenamiento y evaluación del modelo.
+
+#### Suposiciones e implicaciones
+
+| Suposición | Implicación |
+|---|---|
+| Existen valores faltantes, duplicados e inconsistencias. | Se requieren procesos de limpieza y validación. |
+| Las variables presentan diferentes formatos y unidades de medida. | Se requiere estandarizar la información clínica. |
+| Existe un desbalance entre enfermedades comunes y huérfanas. | Se deben aplicar estrategias para evitar que el modelo favorezca las clases mayoritarias. |
+| Un paciente puede tener múltiples registros clínicos. | Se debe evitar que sus registros aparezcan en diferentes conjuntos de entrenamiento y evaluación. |
+| Los datos se actualizarán periódicamente. | Se requiere versionamiento para garantizar la reproducibilidad. |
+
+#### Descripción del proceso
+
+1. **Limpieza:** identificar registros duplicados, valores
+   faltantes, inconsistencias y valores clínicamente inválidos.
+   El tratamiento de los valores faltantes dependerá de la
+   naturaleza de cada variable.
+
+2. **Estandarización:** unificar formatos, unidades de medida
+   y códigos de enfermedades mediante una clasificación
+   clínica común, como la CIE-10.
+
+3. **Selección de variables:** identificar las características
+   relevantes para la predicción, excluyendo identificadores
+   personales y variables que no estén disponibles al momento
+   de realizar la consulta médica.
+
+4. **División de datos:** separar los registros en conjuntos
+   de entrenamiento (70 %), validación (15 %) y prueba (15 %).
+   La división se realizará por paciente, procurando mantener
+   la representación de las diferentes enfermedades.
+
+5. **Transformación:** aplicar codificación de variables
+   categóricas, imputación y escalamiento cuando el algoritmo
+   lo requiera. Las transformaciones se ajustarán únicamente
+   con los datos de entrenamiento.
+
+6. **Tratamiento del desbalance:** evaluar la distribución
+   de las enfermedades y considerar la ponderación de clases
+   o técnicas de sobremuestreo como SMOTE, únicamente sobre
+   los datos de entrenamiento y cuando sean clínicamente
+   apropiadas.
+
+7. **Versionamiento:** almacenar los conjuntos de datos
+   procesados en Google Cloud Storage y gestionar sus
+   versiones mediante DVC.
+
+Apache Airflow coordinará la ejecución de estas tareas.
+Los procesos de transformación deberán ser reproducibles
+y reutilizables durante el entrenamiento y la predicción.
+
+#### Diagrama del proceso
+
+```mermaid
+flowchart TD
+    A["Datos originales<br/>Raw Data"]
+    B["Limpieza y validación"]
+    C["Estandarización"]
+    D["Selección de variables"]
+    E["División de datos por paciente"]
+
+    F["Entrenamiento<br/>70 %"]
+    G["Validación<br/>15 %"]
+    H["Prueba<br/>15 %"]
+
+    I["Ajuste de transformaciones"]
+    J["Tratamiento del desbalance"]
+    K["Aplicación de transformaciones"]
+    L["Aplicación de transformaciones"]
+
+    M["Versionamiento con DVC<br/>Google Cloud Storage"]
+    N["Siguiente etapa:<br/>Entrenamiento del modelo"]
+
+    A --> B
+    B --> C
+    C --> D
+    D --> E
+
+    E --> F
+    E --> G
+    E --> H
+
+    F --> I
+    I --> J
+    G --> K
+    H --> L
+
+    I -.-> K
+    I -.-> L
+
+    J --> M
+    K --> M
+    L --> M
+    M --> N
+
+    classDef datos fill:#DBEAFE,stroke:#2563EB,color:#172554
+    classDef proceso fill:#EDE9FE,stroke:#7C3AED,color:#2E1065
+    classDef almacenamiento fill:#CCFBF1,stroke:#0D9488,color:#134E4A
+
+    class A,F,G,H,N datos
+    class B,C,D,E,I,J,K,L proceso
+    class M almacenamiento
+```
+
+*Figura 3. Preparación y procesamiento de datos.
+
+#### Tecnologías seleccionadas y justificación
+
+| Tecnología | Función | Justificación |
+|---|---|---|
+| Python y Pandas | Limpieza y transformación. | Facilitan la manipulación de datos estructurados. |
+| Scikit-learn | División, imputación y transformación. | Permite construir procesos de preprocesamiento reproducibles. |
+| Imbalanced-learn | Tratamiento del desbalance. | Proporciona técnicas de sobremuestreo y submuestreo. |
+| DVC | Versionamiento de datos. | Garantiza la trazabilidad de los conjuntos utilizados. |
+| Apache Airflow | Orquestación. | Automatiza y controla la ejecución de las tareas. |
+| Apache Spark (opcional) | Procesamiento distribuido. | Permite procesar datos que superen la capacidad de una sola máquina. |
+
+#### Resultado esperado
+
+Conjuntos de datos de entrenamiento, validación y prueba
+limpios, transformados, versionados y disponibles para
+el desarrollo y evaluación del modelo, evitando la fuga
+de información (data leakage).
+
